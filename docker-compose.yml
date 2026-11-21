@@ -1,0 +1,26 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: business_ai_os
+      POSTGRES_USER: business
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U business -d business_ai_os"]
+      interval: 5s
+      retries: 10
+  api:
+    build: .
+    ports: ["127.0.0.1:8000:8000"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://business:${POSTGRES_PASSWORD}@db:5432/business_ai_os
+      APP_API_KEY: ${APP_API_KEY:?Set APP_API_KEY}
+      INITIAL_CAPITAL_BRL: ${INITIAL_CAPITAL_BRL:-2000}
+      MONTHLY_AI_BUDGET_BRL: ${MONTHLY_AI_BUDGET_BRL:-50}
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  pgdata:
