@@ -45,7 +45,271 @@ class Principal(BaseModel):
     auth_method: str
 
 
-DASHBOARD_HTML = '<!doctype html>\n<html lang="pt">\n<head>\n  <meta charset="utf-8" />\n  <meta name="viewport" content="width=device-width, initial-scale=1" />\n  <title>Business AI OS ? Dashboard</title>\n  <style>\n    body { font-family: system-ui, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }\n    header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; background: #1e293b; border-bottom: 1px solid #334155; }\n    main { max-width: 1180px; margin: 24px auto; padding: 0 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }\n    section { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 16px; }\n    h2 { margin: 0 0 12px; font-size: 1.05rem; color: #f8fafc; }\n    label { display: block; font-size: 0.85rem; margin-top: 8px; color: #cbd5e1; }\n    input, textarea, select, button { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px 10px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #f8fafc; }\n    button { cursor: pointer; background: #2563eb; border-color: #3b82f6; font-weight: 600; margin-top: 10px; }\n    button.secondary { background: #334155; border-color: #475569; }\n    button.approve { background: #15803d; border-color: #22c55e; width: auto; padding: 6px 10px; margin: 0 4px 0 0; }\n    button.reject { background: #b91c1c; border-color: #ef4444; width: auto; padding: 6px 10px; margin: 0; }\n    pre { background: #090d16; padding: 10px; border-radius: 6px; overflow: auto; max-height: 220px; font-size: 0.8rem; }\n    .kpi { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 10px; }\n    .kpi div { background: #0f172a; padding: 10px; border-radius: 6px; border: 1px solid #334155; }\n    .kpi span { display: block; font-size: 0.75rem; color: #94a3b8; }\n    .kpi strong { font-size: 1rem; color: #f8fafc; }\n    .row { border-bottom: 1px solid #334155; padding: 8px 0; font-size: 0.88rem; }\n    .inline-check { display: flex; align-items: center; gap: 8px; margin-top: 10px; }\n    .inline-check input { width: auto; margin: 0; }\n    .badge { font-size: 0.8rem; padding: 4px 8px; border-radius: 999px; background: #0f172a; border: 1px solid #475569; }\n  </style>\n</head>\n<body>\n  <header>\n    <div><strong>Business AI OS</strong> ? Painel CEO / CFO, Caixa e Aprova??es</div>\n    <div style="display:flex; gap:8px; align-items:center;">\n      <span id="session-badge" class="badge">Sess?o: n?o autenticado</span>\n      <button id="btn-logout" class="secondary" style="width:auto; margin:0; padding:6px 12px;" onclick="logout()">Sair</button>\n    </div>\n  </header>\n\n  <main>\n    <section>\n      <h2>1. Sess?o e Chave Opcional</h2>\n      <label>Utilizador</label>\n      <input id="login-user" placeholder="ex: admin" />\n      <label>Palavra-passe</label>\n      <input id="login-pass" type="password" placeholder="????????" />\n      <button onclick="login()">Entrar com Sess?o</button>\n      <label>X-API-Key opcional (fallback de servi?o)</label>\n      <input id="api-key" placeholder="Opcional se j? estiver autenticado por sess?o" />\n      <button class="secondary" onclick="refreshAll()">Atualizar Dados</button>\n    </section>\n\n    <section>\n      <h2>2. Conversa e Workflow CEO / CFO</h2>\n      <label>Objetivo estrat?gico ou financeiro</label>\n      <textarea id="wf-goal" rows="3" placeholder="Ex: Avaliar margem l?quida e caixa para o pr?ximo trimestre"></textarea>\n      <label class="inline-check">\n        <input id="wf-gemini" type="checkbox" />\n        <span>Usar Gemini (sujeito a chave e reserva de or?amento)</span>\n      </label>\n      <button onclick="runWorkflow()">Executar Workflow CEO / CFO</button>\n      <pre id="wf-output">Aguardando execu??o...</pre>\n    </section>\n\n    <section>\n      <h2>3. Controle de Caixa e Or?amento IA</h2>\n      <div class="kpi">\n        <div><span>Capital Inicial (BRL)</span><strong id="kpi-capital">__CAPITAL__</strong></div>\n        <div><span>Teto Mensal IA (BRL)</span><strong id="kpi-budget">__BUDGET__</strong></div>\n      </div>\n      <div class="row">Regra de aprova??o: decis?es registam estado sem execu??o autom?tica (<code>executed: false</code>).</div>\n      <pre id="audit-output">Auditoria dispon?vel para perfil admin ou X-API-Key.</pre>\n    </section>\n\n    <section>\n      <h2>4. Tarefas</h2>\n      <label>T?tulo da tarefa</label>\n      <input id="task-title" placeholder="Ex: Rever fluxo de caixa semanal" />\n      <label>Agente respons?vel</label>\n      <input id="task-agent" value="cfo" />\n      <button onclick="createTask()">Criar Tarefa</button>\n      <div id="tasks-list"></div>\n    </section>\n\n    <section style="grid-column: 1 / -1;">\n      <h2>5. Aprova??es Humanas (Sem Execu??o Autom?tica)</h2>\n      <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:8px; align-items:end;">\n        <div>\n          <label>Tipo de a??o</label>\n          <input id="app-action" placeholder="Ex: budget_reallocation" />\n        </div>\n        <div>\n          <label>Payload JSON</label>\n          <input id="app-payload" value=\'{"amount_brl": 250}\' />\n        </div>\n        <button onclick="requestApproval()">Solicitar Aprova??o</button>\n      </div>\n      <div id="approvals-list" style="margin-top:12px;"></div>\n    </section>\n  </main>\n\n  <script>\n    function authHeaders(extra = {}) {\n      const key = document.getElementById(\'api-key\').value.trim();\n      const headers = { \'Content-Type\': \'application/json\', ...extra };\n      if (key) headers[\'X-API-Key\'] = key;\n      return headers;\n    }\n\n    async function login() {\n      const username = document.getElementById(\'login-user\').value.trim();\n      const password = document.getElementById(\'login-pass\').value;\n      const res = await fetch(\'/auth/login\', {\n        method: \'POST\',\n        headers: { \'Content-Type\': \'application/json\' },\n        body: JSON.stringify({ username, password }),\n      });\n      if (!res.ok) {\n        alert(\'Falha no login (\' + res.status + \')\');\n        return;\n      }\n      await refreshAll();\n    }\n\n    async function logout() {\n      await fetch(\'/auth/logout\', { method: \'POST\', headers: authHeaders() });\n      document.getElementById(\'session-badge\').textContent = \'Sess?o: n?o autenticado\';\n      document.getElementById(\'tasks-list\').innerHTML = \'\';\n      document.getElementById(\'approvals-list\').innerHTML = \'\';\n    }\n\n    async function loadMe() {\n      const res = await fetch(\'/auth/me\', { headers: authHeaders() });\n      const badge = document.getElementById(\'session-badge\');\n      if (!res.ok) {\n        badge.textContent = \'Sess?o: n?o autenticado\';\n        return null;\n      }\n      const me = await res.json();\n      badge.textContent = `Sess?o: ${me.username} (${me.role})`;\n      return me;\n    }\n\n    async function runWorkflow() {\n      const goal = document.getElementById(\'wf-goal\').value;\n      const use_gemini = document.getElementById(\'wf-gemini\').checked;\n      const res = await fetch(\'/workflows/ceo-cfo\', {\n        method: \'POST\',\n        headers: authHeaders(),\n        body: JSON.stringify({ goal, use_gemini }),\n      });\n      const data = await res.json();\n      document.getElementById(\'wf-output\').textContent = JSON.stringify({ status: res.status, data }, null, 2);\n      await loadAudit();\n    }\n\n    async function createTask() {\n      const title = document.getElementById(\'task-title\').value;\n      const assigned_agent = document.getElementById(\'task-agent\').value;\n      const res = await fetch(\'/tasks\', {\n        method: \'POST\',\n        headers: authHeaders(),\n        body: JSON.stringify({ title, assigned_agent }),\n      });\n      if (!res.ok) {\n        alert(\'Erro ao criar tarefa (\' + res.status + \')\');\n        return;\n      }\n      document.getElementById(\'task-title\').value = \'\';\n      await loadTasks();\n    }\n\n    async function loadTasks() {\n      const res = await fetch(\'/tasks\', { headers: authHeaders() });\n      if (!res.ok) return;\n      const tasks = await res.json();\n      document.getElementById(\'tasks-list\').innerHTML = tasks.map(t =>\n        `<div class="row"><strong>#${t.id}</strong> ${t.title} ? <em>${t.assigned_agent}</em> [${t.status}]</div>`\n      ).join(\'\') || \'<div class="row">Sem tarefas.</div>\';\n    }\n\n    async function requestApproval() {\n      const action_type = document.getElementById(\'app-action\').value;\n      let payload = {};\n      try { payload = JSON.parse(document.getElementById(\'app-payload\').value || \'{}\'); }\n      catch { alert(\'Payload JSON inv?lido\'); return; }\n      const res = await fetch(\'/approvals\', {\n        method: \'POST\',\n        headers: authHeaders(),\n        body: JSON.stringify({ action_type, payload }),\n      });\n      if (!res.ok) {\n        alert(\'Erro ao solicitar aprova??o (\' + res.status + \')\');\n        return;\n      }\n      const created = await res.json();\n      renderApprovalItem(created);\n    }\n\n    function renderApprovalItem(item) {\n      const container = document.getElementById(\'approvals-list\');\n      const div = document.createElement(\'div\');\n      div.className = \'row\';\n      div.id = \'approval-\' + item.id;\n      div.innerHTML = `\n        <strong>Aprova??o #${item.id}</strong> ? ${item.action_type || \'a??o\'} ? estado: <span id="app-status-${item.id}">${item.status}</span>\n        <span id="app-exec-${item.id}"></span>\n        <div style="margin-top:6px;">\n          <button class="approve" onclick="decideApproval(${item.id}, true)">Aprovar</button>\n          <button class="reject" onclick="decideApproval(${item.id}, false)">Rejeitar</button>\n        </div>`;\n      container.prepend(div);\n    }\n\n    async function decideApproval(id, approve) {\n      const res = await fetch(`/approvals/${id}/decision`, {\n        method: \'POST\',\n        headers: authHeaders(),\n        body: JSON.stringify({ approve }),\n      });\n      const data = await res.json();\n      if (!res.ok) {\n        alert(\'Decis?o bloqueada (\' + res.status + \'): \' + (data.detail || \'\'));\n        return;\n      }\n      document.getElementById(\'app-status-\' + id).textContent = data.status;\n      document.getElementById(\'app-exec-\' + id).textContent = ` (executed: ${data.executed})`;\n      await loadAudit();\n    }\n\n    async function loadAudit() {\n      const res = await fetch(\'/audit\', { headers: authHeaders() });\n      const out = document.getElementById(\'audit-output\');\n      if (!res.ok) {\n        out.textContent = `Auditoria indispon?vel (${res.status})`;\n        return;\n      }\n      const rows = await res.json();\n      out.textContent = JSON.stringify(rows.slice(0, 15), null, 2);\n    }\n\n    async function refreshAll() {\n      await loadMe();\n      await loadTasks();\n      await loadAudit();\n    }\n\n    refreshAll();\n  </script>\n</body>\n</html>'
+DASHBOARD_HTML = """<!doctype html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Business AI OS — Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+    header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 16px 24px; background: #1e293b; border-bottom: 1px solid #334155; }
+    .header-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    main.dashboard-grid { max-width: 1200px; margin: 24px auto; padding: 0 16px 32px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: stretch; }
+    section.card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 18px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+    section.card-full { grid-column: 1 / -1; }
+    h2 { margin: 0 0 6px; font-size: 1.05rem; color: #f8fafc; padding-bottom: 8px; border-bottom: 1px solid #334155; }
+    label { display: block; font-size: 0.85rem; margin-top: 4px; color: #cbd5e1; }
+    input, textarea, select, button { width: 100%; font: inherit; font-size: 0.9rem; line-height: 1.4; margin-top: 4px; padding: 8px 10px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #f8fafc; }
+    button { cursor: pointer; background: #2563eb; border-color: #3b82f6; font-weight: 600; margin-top: 8px; }
+    button.secondary { background: #334155; border-color: #475569; }
+    button.approve { background: #15803d; border-color: #22c55e; width: auto; padding: 6px 10px; margin: 0 4px 0 0; }
+    button.reject { background: #b91c1c; border-color: #ef4444; width: auto; padding: 6px 10px; margin: 0; }
+    pre { background: #090d16; padding: 10px 12px; border-radius: 6px; border: 1px solid #1e293b; overflow: auto; max-width: 100%; max-height: 220px; margin: 6px 0 0; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; }
+    .kpi { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 4px; }
+    .kpi div { background: #0f172a; padding: 10px; border-radius: 6px; border: 1px solid #334155; min-width: 0; }
+    .kpi span { display: block; font-size: 0.75rem; color: #94a3b8; }
+    .kpi strong { font-size: 1rem; color: #f8fafc; word-break: break-word; }
+    .row { border-bottom: 1px solid #334155; padding: 8px 0; font-size: 0.88rem; word-break: break-word; }
+    .list-box { max-height: 220px; overflow-y: auto; margin-top: 6px; }
+    .inline-check { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+    .inline-check input { width: auto; margin: 0; }
+    .badge { font-size: 0.8rem; padding: 4px 10px; border-radius: 999px; background: #0f172a; border: 1px solid #475569; }
+    .approval-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 12px; align-items: end; }
+    .approval-form > div { min-width: 0; }
+    .approval-form button { margin-top: 0; white-space: nowrap; padding: 8px 16px; }
+    @media (max-width: 860px) {
+      main.dashboard-grid { grid-template-columns: 1fr; }
+      .approval-form { grid-template-columns: 1fr; }
+      .approval-form button { width: 100%; }
+    }
+    @media (max-width: 480px) {
+      .kpi { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div><strong>Business AI OS</strong> — Painel CEO / CFO, Caixa e Aprovações</div>
+    <div class="header-actions">
+      <span id="session-badge" class="badge">Sessão: não autenticado</span>
+      <button id="btn-logout" class="secondary" style="width:auto; margin:0; padding:6px 12px;" onclick="logout()">Sair</button>
+    </div>
+  </header>
+
+  <main class="dashboard-grid">
+    <section id="sec-session" class="card">
+      <h2>1. Sessão e Chave Opcional</h2>
+      <label>Utilizador</label>
+      <input id="login-user" placeholder="ex: admin" />
+      <label>Palavra-passe</label>
+      <input id="login-pass" type="password" placeholder="••••••••" />
+      <button onclick="login()">Entrar com Sessão</button>
+      <label>X-API-Key opcional (fallback de serviço)</label>
+      <input id="api-key" placeholder="Opcional se já estiver autenticado por sessão" />
+      <button class="secondary" onclick="refreshAll()">Atualizar Dados</button>
+    </section>
+
+    <section id="sec-workflow" class="card">
+      <h2>2. Conversa e Workflow CEO / CFO</h2>
+      <label>Objetivo estratégico ou financeiro</label>
+      <textarea id="wf-goal" rows="3" placeholder="Ex: Avaliar margem líquida e caixa para o próximo trimestre"></textarea>
+      <label class="inline-check">
+        <input id="wf-gemini" type="checkbox" />
+        <span>Usar Gemini (sujeito a chave e reserva de orçamento)</span>
+      </label>
+      <button onclick="runWorkflow()">Executar Workflow CEO / CFO</button>
+      <pre id="wf-output">Aguardando execução...</pre>
+    </section>
+
+    <section id="sec-budget" class="card">
+      <h2>3. Controle de Caixa e Orçamento IA</h2>
+      <div class="kpi">
+        <div><span>Capital Inicial (BRL)</span><strong id="kpi-capital">__CAPITAL__</strong></div>
+        <div><span>Teto Mensal IA (BRL)</span><strong id="kpi-budget">__BUDGET__</strong></div>
+      </div>
+      <div class="row">Regra de aprovação: decisões registam estado sem execução automática (<code>executed: false</code>).</div>
+      <pre id="audit-output">Auditoria disponível para perfil admin ou X-API-Key.</pre>
+    </section>
+
+    <section id="sec-tasks" class="card">
+      <h2>4. Tarefas</h2>
+      <label>Título da tarefa</label>
+      <input id="task-title" placeholder="Ex: Rever fluxo de caixa semanal" />
+      <label>Agente responsável</label>
+      <input id="task-agent" value="cfo" />
+      <button onclick="createTask()">Criar Tarefa</button>
+      <div id="tasks-list" class="list-box"></div>
+    </section>
+
+    <section id="sec-approvals" class="card card-full">
+      <h2>5. Aprovações Humanas (Sem Execução Automática)</h2>
+      <div class="approval-form">
+        <div>
+          <label>Tipo de ação</label>
+          <input id="app-action" placeholder="Ex: budget_reallocation" />
+        </div>
+        <div>
+          <label>Payload JSON</label>
+          <input id="app-payload" value='{"amount_brl": 250}' />
+        </div>
+        <button onclick="requestApproval()">Solicitar Aprovação</button>
+      </div>
+      <div id="approvals-list" class="list-box"></div>
+    </section>
+  </main>
+
+  <script>
+    function authHeaders(extra = {}) {
+      const key = document.getElementById('api-key').value.trim();
+      const headers = { 'Content-Type': 'application/json', ...extra };
+      if (key) headers['X-API-Key'] = key;
+      return headers;
+    }
+
+    async function login() {
+      const username = document.getElementById('login-user').value.trim();
+      const password = document.getElementById('login-pass').value;
+      const res = await fetch('/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      if (!res.ok) {
+        alert('Falha no login (' + res.status + ')');
+        return;
+      }
+      await refreshAll();
+    }
+
+    async function logout() {
+      await fetch('/auth/logout', { method: 'POST', headers: authHeaders() });
+      document.getElementById('session-badge').textContent = 'Sessão: não autenticado';
+      document.getElementById('tasks-list').innerHTML = '';
+      document.getElementById('approvals-list').innerHTML = '';
+    }
+
+    async function loadMe() {
+      const res = await fetch('/auth/me', { headers: authHeaders() });
+      const badge = document.getElementById('session-badge');
+      if (!res.ok) {
+        badge.textContent = 'Sessão: não autenticado';
+        return null;
+      }
+      const me = await res.json();
+      badge.textContent = `Sessão: ${me.username} (${me.role})`;
+      return me;
+    }
+
+    async function runWorkflow() {
+      const goal = document.getElementById('wf-goal').value;
+      const use_gemini = document.getElementById('wf-gemini').checked;
+      const res = await fetch('/workflows/ceo-cfo', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ goal, use_gemini }),
+      });
+      const data = await res.json();
+      document.getElementById('wf-output').textContent = JSON.stringify({ status: res.status, data }, null, 2);
+      await loadAudit();
+    }
+
+    async function createTask() {
+      const title = document.getElementById('task-title').value;
+      const assigned_agent = document.getElementById('task-agent').value;
+      const res = await fetch('/tasks', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ title, assigned_agent }),
+      });
+      if (!res.ok) {
+        alert('Erro ao criar tarefa (' + res.status + ')');
+        return;
+      }
+      document.getElementById('task-title').value = '';
+      await loadTasks();
+    }
+
+    async function loadTasks() {
+      const res = await fetch('/tasks', { headers: authHeaders() });
+      if (!res.ok) return;
+      const tasks = await res.json();
+      document.getElementById('tasks-list').innerHTML = tasks.map(t =>
+        `<div class="row"><strong>#${t.id}</strong> ${t.title} — <em>${t.assigned_agent}</em> [${t.status}]</div>`
+      ).join('') || '<div class="row">Sem tarefas.</div>';
+    }
+
+    async function requestApproval() {
+      const action_type = document.getElementById('app-action').value;
+      let payload = {};
+      try { payload = JSON.parse(document.getElementById('app-payload').value || '{}'); }
+      catch { alert('Payload JSON inválido'); return; }
+      const res = await fetch('/approvals', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ action_type, payload }),
+      });
+      if (!res.ok) {
+        alert('Erro ao solicitar aprovação (' + res.status + ')');
+        return;
+      }
+      const created = await res.json();
+      renderApprovalItem(created);
+    }
+
+    function renderApprovalItem(item) {
+      const container = document.getElementById('approvals-list');
+      const div = document.createElement('div');
+      div.className = 'row';
+      div.id = 'approval-' + item.id;
+      div.innerHTML = `
+        <strong>Aprovação #${item.id}</strong> — ${item.action_type || 'ação'} · estado: <span id="app-status-${item.id}">${item.status}</span>
+        <span id="app-exec-${item.id}"></span>
+        <div style="margin-top:6px;">
+          <button class="approve" onclick="decideApproval(${item.id}, true)">Aprovar</button>
+          <button class="reject" onclick="decideApproval(${item.id}, false)">Rejeitar</button>
+        </div>`;
+      container.prepend(div);
+    }
+
+    async function decideApproval(id, approve) {
+      const res = await fetch(`/approvals/${id}/decision`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ approve }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert('Decisão bloqueada (' + res.status + '): ' + (data.detail || ''));
+        return;
+      }
+      document.getElementById('app-status-' + id).textContent = data.status;
+      document.getElementById('app-exec-' + id).textContent = ` (executed: ${data.executed})`;
+      await loadAudit();
+    }
+
+    async function loadAudit() {
+      const res = await fetch('/audit', { headers: authHeaders() });
+      const out = document.getElementById('audit-output');
+      if (!res.ok) {
+        out.textContent = `Auditoria indisponível (${res.status})`;
+        return;
+      }
+      const rows = await res.json();
+      out.textContent = JSON.stringify(rows.slice(0, 15), null, 2);
+    }
+
+    async function refreshAll() {
+      await loadMe();
+      await loadTasks();
+      await loadAudit();
+    }
+
+    refreshAll();
+  </script>
+</body>
+</html>"""
 
 def create_app(settings: Settings | None = None):
     cfg = settings or Settings()
