@@ -25,6 +25,10 @@ def test_dashboard_renders_and_shows_financial_limits():
         assert "3. Controle de Caixa e Orçamento IA" in r.text
         assert "4. Tarefas" in r.text
         assert "5. Aprovações Humanas (Sem Execução Automática)" in r.text
+        assert "6. Base de Conhecimento da Empresa" in r.text
+        assert "CMO (Marketing / Ads)" in r.text
+        assert "COO (Operações)" in r.text
+        assert "Salvar Base de Conhecimento" in r.text
         assert "Título da tarefa" in r.text
         assert "Agente responsável" in r.text
         assert "Aguardando execução..." in r.text

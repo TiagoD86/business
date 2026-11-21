@@ -60,3 +60,17 @@ class AIUsage(Base):
     period: Mapped[str] = mapped_column(String(7), index=True)
     amount_brl: Mapped[float] = mapped_column(Numeric(12, 2))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class CompanyKnowledge(Base):
+    __tablename__ = 'company_knowledge'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_name: Mapped[str] = mapped_column(String(160), default='Business AI OS')
+    business_profile: Mapped[str] = mapped_column(Text, default='')
+    goals_and_margins: Mapped[str] = mapped_column(Text, default='')
+    golden_rules: Mapped[str] = mapped_column(Text, default='')
+    agent_notes: Mapped[str] = mapped_column(Text, default='')
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    updated_by: Mapped[str] = mapped_column(String(80), default='system')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)

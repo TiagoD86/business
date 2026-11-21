@@ -5,14 +5,15 @@ import hmac
 import json
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Response
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from .agents import AGENTS, SPECIALIST_AGENTS, normalize_workflow_agents
 from .auth import create_server_session, get_user_by_session_token, revoke_session_token, verify_password
 from .config import Settings
 from .db import make_engine, make_session_factory
-from .models import AIUsage, Approval, AuditEvent, Task, User
-from .orchestration import GeminiAnalyst, OfflineAnalyst, run_ceo_cfo
+from .models import AIUsage, Approval, AuditEvent, CompanyKnowledge, Task, User
+from .orchestration import GeminiAnalyst, OfflineAnalyst, format_knowledge_context, run_ceo_cfo
 
 
 class LoginIn(BaseModel):
@@ -23,11 +24,37 @@ class LoginIn(BaseModel):
 class WorkflowIn(BaseModel):
     goal: str = Field(min_length=3, max_length=500)
     use_gemini: bool = False
+    agents: list[str] | None = None
+
+    @field_validator('agents')
+    @classmethod
+    def validate_agents(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return normalize_workflow_agents(value)
 
 
 class TaskIn(BaseModel):
     title: str = Field(min_length=3, max_length=250)
     assigned_agent: str
+
+    @field_validator('assigned_agent')
+    @classmethod
+    def validate_agent(cls, value: str) -> str:
+        code = value.strip().lower()
+        if code not in AGENTS:
+            allowed = ', '.join(AGENTS.keys())
+            raise ValueError(f'Unsupported agent "{value}". Allowed: {allowed}')
+        return code
+
+
+class KnowledgeIn(BaseModel):
+    company_name: str = Field(default='Business AI OS', min_length=1, max_length=160)
+    business_profile: str = Field(default='', max_length=4000)
+    goals_and_margins: str = Field(default='', max_length=4000)
+    golden_rules: str = Field(default='', max_length=4000)
+    agent_notes: str = Field(default='', max_length=4000)
+    is_active: bool = True
 
 
 class ApprovalIn(BaseModel):
@@ -79,13 +106,21 @@ DASHBOARD_HTML = """<!doctype html>
     .approval-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 12px; align-items: end; }
     .approval-form > div { min-width: 0; }
     .approval-form button { margin-top: 0; white-space: nowrap; padding: 8px 16px; }
+    .agent-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; margin-top: 2px; }
+    .kb-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .kb-grid > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+    .kb-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; }
+    .kb-actions button { width: auto; margin-top: 0; padding: 8px 18px; }
     @media (max-width: 860px) {
       main.dashboard-grid { grid-template-columns: 1fr; }
       .approval-form { grid-template-columns: 1fr; }
       .approval-form button { width: 100%; }
+      .kb-grid { grid-template-columns: 1fr; }
+      .kb-actions button { width: 100%; }
     }
     @media (max-width: 480px) {
       .kpi { grid-template-columns: 1fr; }
+      .agent-checks { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -115,11 +150,18 @@ DASHBOARD_HTML = """<!doctype html>
       <h2>2. Conversa e Workflow CEO / CFO</h2>
       <label>Objetivo estratégico ou financeiro</label>
       <textarea id="wf-goal" rows="3" placeholder="Ex: Avaliar margem líquida e caixa para o próximo trimestre"></textarea>
+      <label>Agentes especialistas no workflow</label>
+      <div class="agent-checks">
+        <label class="inline-check"><input type="checkbox" class="wf-agent" value="ceo" checked /><span>CEO (Estratégia)</span></label>
+        <label class="inline-check"><input type="checkbox" class="wf-agent" value="cfo" checked /><span>CFO (Finanças)</span></label>
+        <label class="inline-check"><input type="checkbox" class="wf-agent" value="cmo" checked /><span>CMO (Marketing / Ads)</span></label>
+        <label class="inline-check"><input type="checkbox" class="wf-agent" value="coo" checked /><span>COO (Operações)</span></label>
+      </div>
       <label class="inline-check">
         <input id="wf-gemini" type="checkbox" />
         <span>Usar Gemini (sujeito a chave e reserva de orçamento)</span>
       </label>
-      <button onclick="runWorkflow()">Executar Workflow CEO / CFO</button>
+      <button onclick="runWorkflow()">Executar Workflow Especialistas</button>
       <pre id="wf-output">Aguardando execução...</pre>
     </section>
 
@@ -138,7 +180,12 @@ DASHBOARD_HTML = """<!doctype html>
       <label>Título da tarefa</label>
       <input id="task-title" placeholder="Ex: Rever fluxo de caixa semanal" />
       <label>Agente responsável</label>
-      <input id="task-agent" value="cfo" />
+      <select id="task-agent">
+        <option value="cfo" selected>CFO — Finanças e Caixa</option>
+        <option value="ceo">CEO — Estratégia e Delegação</option>
+        <option value="cmo">CMO — Marketing, PMax e ROAS</option>
+        <option value="coo">COO — Operações, Estoque e Logística</option>
+      </select>
       <button onclick="createTask()">Criar Tarefa</button>
       <div id="tasks-list" class="list-box"></div>
     </section>
@@ -157,6 +204,34 @@ DASHBOARD_HTML = """<!doctype html>
         <button onclick="requestApproval()">Solicitar Aprovação</button>
       </div>
       <div id="approvals-list" class="list-box"></div>
+    </section>
+
+    <section id="sec-knowledge" class="card card-full">
+      <h2>6. Base de Conhecimento da Empresa</h2>
+      <div class="kb-grid">
+        <div>
+          <label>Nome da empresa / marca</label>
+          <input id="kb-company" placeholder="Ex: Minha Loja Digital" />
+          <label>Perfil e canais do negócio</label>
+          <textarea id="kb-profile" rows="3" placeholder="Ex: E-commerce próprio + Google Ads Performance Max + marketplaces"></textarea>
+          <label>Metas e margens</label>
+          <textarea id="kb-goals" rows="3" placeholder="Ex: Margem líquida mínima 18%, ROAS alvo 4.5x"></textarea>
+        </div>
+        <div>
+          <label>Regras de ouro e restrições operacionais</label>
+          <textarea id="kb-rules" rows="3" placeholder="Ex: Nunca aprovar compra ou aumento de verba sem revisão humana"></textarea>
+          <label>Notas gerais ou por agente (CEO, CFO, CMO, COO)</label>
+          <textarea id="kb-notes" rows="4" placeholder="Ex: CMO focar em criativos UGC e PMax; COO monitorar estoque crítico"></textarea>
+          <label class="inline-check">
+            <input id="kb-active" type="checkbox" checked />
+            <span>Injetar automaticamente no contexto dos agentes</span>
+          </label>
+        </div>
+      </div>
+      <div class="kb-actions">
+        <button onclick="saveKnowledge()">Salvar Base de Conhecimento</button>
+        <span id="kb-status" class="badge">Aguardando autenticação</span>
+      </div>
     </section>
   </main>
 
@@ -188,6 +263,7 @@ DASHBOARD_HTML = """<!doctype html>
       document.getElementById('session-badge').textContent = 'Sessão: não autenticado';
       document.getElementById('tasks-list').innerHTML = '';
       document.getElementById('approvals-list').innerHTML = '';
+      document.getElementById('kb-status').textContent = 'Aguardando autenticação';
     }
 
     async function loadMe() {
@@ -205,10 +281,15 @@ DASHBOARD_HTML = """<!doctype html>
     async function runWorkflow() {
       const goal = document.getElementById('wf-goal').value;
       const use_gemini = document.getElementById('wf-gemini').checked;
+      const agents = Array.from(document.querySelectorAll('.wf-agent:checked')).map(el => el.value);
+      if (agents.length === 0) {
+        alert('Selecione pelo menos um agente especialista.');
+        return;
+      }
       const res = await fetch('/workflows/ceo-cfo', {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ goal, use_gemini }),
+        body: JSON.stringify({ goal, use_gemini, agents }),
       });
       const data = await res.json();
       document.getElementById('wf-output').textContent = JSON.stringify({ status: res.status, data }, null, 2);
@@ -300,9 +381,55 @@ DASHBOARD_HTML = """<!doctype html>
       out.textContent = JSON.stringify(rows.slice(0, 15), null, 2);
     }
 
+    async function loadKnowledge() {
+      const res = await fetch('/knowledge', { headers: authHeaders() });
+      const statusEl = document.getElementById('kb-status');
+      if (!res.ok) {
+        statusEl.textContent = `Base indisponível (${res.status})`;
+        return;
+      }
+      const kb = await res.json();
+      document.getElementById('kb-company').value = kb.company_name || '';
+      document.getElementById('kb-profile').value = kb.business_profile || '';
+      document.getElementById('kb-goals').value = kb.goals_and_margins || '';
+      document.getElementById('kb-rules').value = kb.golden_rules || '';
+      document.getElementById('kb-notes').value = kb.agent_notes || '';
+      document.getElementById('kb-active').checked = Boolean(kb.is_active);
+      if (kb.id) {
+        statusEl.textContent = `Base carregada (por ${kb.updated_by || 'sistema'})`;
+      } else {
+        statusEl.textContent = 'Base inicial (ainda não salva)';
+      }
+    }
+
+    async function saveKnowledge() {
+      const payload = {
+        company_name: document.getElementById('kb-company').value.trim() || 'Business AI OS',
+        business_profile: document.getElementById('kb-profile').value,
+        goals_and_margins: document.getElementById('kb-goals').value,
+        golden_rules: document.getElementById('kb-rules').value,
+        agent_notes: document.getElementById('kb-notes').value,
+        is_active: document.getElementById('kb-active').checked,
+      };
+      const res = await fetch('/knowledge', {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      });
+      const statusEl = document.getElementById('kb-status');
+      if (!res.ok) {
+        alert('Erro ao salvar base de conhecimento (' + res.status + ')');
+        return;
+      }
+      const saved = await res.json();
+      statusEl.textContent = `Base salva (por ${saved.updated_by || 'sistema'})`;
+      await loadAudit();
+    }
+
     async function refreshAll() {
       await loadMe();
       await loadTasks();
+      await loadKnowledge();
       await loadAudit();
     }
 
@@ -394,12 +521,81 @@ def create_app(settings: Settings | None = None):
     def me(principal: Principal = Depends(current_principal)):
         return principal
 
+    def serialize_knowledge(kb: CompanyKnowledge | None) -> dict:
+        if kb is None:
+            return {
+                'id': None,
+                'company_name': 'Business AI OS',
+                'business_profile': '',
+                'goals_and_margins': '',
+                'golden_rules': '',
+                'agent_notes': '',
+                'is_active': True,
+                'updated_by': None,
+                'updated_at': None,
+            }
+        return {
+            'id': kb.id,
+            'company_name': kb.company_name,
+            'business_profile': kb.business_profile,
+            'goals_and_margins': kb.goals_and_margins,
+            'golden_rules': kb.golden_rules,
+            'agent_notes': kb.agent_notes,
+            'is_active': kb.is_active,
+            'updated_by': kb.updated_by,
+            'updated_at': kb.updated_at.isoformat() if kb.updated_at else None,
+        }
+
+    @app.get('/agents')
+    def list_agents(principal: Principal = Depends(require_roles('admin', 'operator', 'viewer'))):
+        return {'specialists': SPECIALIST_AGENTS, 'all': AGENTS}
+
+    @app.get('/knowledge')
+    def get_knowledge(
+        principal: Principal = Depends(require_roles('admin', 'operator', 'viewer')),
+        session: Session = Depends(db),
+    ):
+        kb = session.scalar(select(CompanyKnowledge).order_by(CompanyKnowledge.id.desc()))
+        return serialize_knowledge(kb)
+
+    @app.put('/knowledge')
+    @app.post('/knowledge')
+    def upsert_knowledge(
+        data: KnowledgeIn,
+        principal: Principal = Depends(require_roles('admin', 'operator')),
+        session: Session = Depends(db),
+    ):
+        kb = session.scalar(select(CompanyKnowledge).order_by(CompanyKnowledge.id.desc()))
+        if kb is None:
+            kb = CompanyKnowledge()
+            session.add(kb)
+        kb.company_name = data.company_name.strip()
+        kb.business_profile = data.business_profile.strip()
+        kb.goals_and_margins = data.goals_and_margins.strip()
+        kb.golden_rules = data.golden_rules.strip()
+        kb.agent_notes = data.agent_notes.strip()
+        kb.is_active = data.is_active
+        kb.updated_by = principal.username
+        kb.updated_at = datetime.now(timezone.utc)
+        session.flush()
+        audit(session, 'knowledge.updated', f'{principal.username}:{kb.id}:active={kb.is_active}')
+        session.commit()
+        session.refresh(kb)
+        return serialize_knowledge(kb)
+
     @app.post('/workflows/ceo-cfo')
+    @app.post('/workflows/specialists')
     def ceo_cfo(
         data: WorkflowIn,
         principal: Principal = Depends(require_roles('admin', 'operator')),
         session: Session = Depends(db),
     ):
+        selected_agents = normalize_workflow_agents(data.agents)
+        active_kb = session.scalar(
+            select(CompanyKnowledge).where(CompanyKnowledge.is_active.is_(True)).order_by(CompanyKnowledge.id.desc())
+        )
+        kb_context = format_knowledge_context(active_kb)
+
         if data.use_gemini:
             if not cfg.gemini_api_key:
                 raise HTTPException(status_code=503, detail='Gemini API key not configured')
@@ -412,17 +608,24 @@ def create_app(settings: Settings | None = None):
             audit(session, 'ai.budget_reserved', f'{principal.username}:{ceiling}')
             session.commit()
             try:
-                result = run_ceo_cfo(data.goal, GeminiAnalyst(cfg.gemini_api_key, cfg.gemini_model))
+                analyst = GeminiAnalyst(
+                    cfg.gemini_api_key,
+                    cfg.gemini_model,
+                    knowledge_context=kb_context,
+                    agents=selected_agents,
+                )
+                result = run_ceo_cfo(data.goal, analyst)
             except Exception as exc:
                 audit(session, 'ai.workflow_failed', f'{principal.username}:{exc}')
                 session.commit()
                 raise HTTPException(status_code=502, detail='Gemini workflow failed') from exc
-            audit(session, 'workflow.ceo_cfo', f'{principal.username}:gemini')
+            audit(session, 'workflow.ceo_cfo', f'{principal.username}:gemini:{",".join(selected_agents)}')
             session.commit()
             return result
 
-        result = run_ceo_cfo(data.goal, OfflineAnalyst())
-        audit(session, 'workflow.ceo_cfo', f'{principal.username}:offline')
+        analyst = OfflineAnalyst(knowledge_context=kb_context, agents=selected_agents)
+        result = run_ceo_cfo(data.goal, analyst)
+        audit(session, 'workflow.ceo_cfo', f'{principal.username}:offline:{",".join(selected_agents)}')
         session.commit()
         return result
 
